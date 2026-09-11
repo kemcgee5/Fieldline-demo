@@ -348,6 +348,12 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
 .tab.is-closed .num,.tab.is-closed .cty{text-decoration:line-through;opacity:.6}
 .tick.shift .tk-dot i{background:var(--chalk);border-color:var(--chalk)}
 .tick.shift .tk-note{color:var(--fog)}
+
+/* ---------- cloud sync status ---------- */
+.cloudstat{font-family:var(--data);font-size:10.5px;white-space:nowrap;color:var(--fog2)}
+.cloudstat.saving{color:var(--fog)}
+.cloudstat.ok{color:var(--fog2)}
+.cloudstat.fail{color:var(--red-hi)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -417,6 +423,7 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
     <button class="btn red" id="bEmail">Email DAR</button>
     <span class="who" id="who-line" hidden>
       <span id="who-email"></span>
+      <span class="cloudstat" id="cloudStat" hidden></span>
       <button type="button" class="btn ghost sm" id="signout-btn">Sign out</button>
     </span>
   </div>
@@ -515,8 +522,8 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
 // This only gates when boot() (defined at the bottom, wrapping the
 // tool's original startup sequence) is allowed to run.
 // ============================================================
-var SUPABASE_URL = 'https://uanghzuketepjencbebw.supabase.co';
-var SUPABASE_ANON_KEY = 'sb_publishable_kx-z6hgtOSgXEl6wzBm3kg_NJqfnZQI';
+var SUPABASE_URL = 'https://uanghzuketepjencbebw.supabase.co;
+var SUPABASE_ANON_KEY = 'sb_publishable_kx-z6hgtOSgXEl6wzBm3kg_NJqfnZQI;
 var TENANT_SLUG = 'strickland-soc';
 
 var supabaseClient = null;
@@ -524,6 +531,10 @@ if (SUPABASE_URL.indexOf('YOUR_') !== 0 && window.supabase) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 var currentTenantId = null;
+var currentUserEmail = null;
+var cloudSessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+var cloudSaveTimer = null;
+var cloudChannel = null;
 var _booted = false;
 
 function bootOnce(){
@@ -545,6 +556,106 @@ function platformShowDashboard(email){
   var who = document.getElementById('who-line');
   who.hidden = false;
   document.getElementById('who-email').textContent = email;
+}
+
+function setCloudStatus(mode){
+  var el = document.getElementById('cloudStat');
+  if (!el) return;
+  var d = new Date(), t = p2(d.getHours()) + ":" + p2(d.getMinutes());
+  el.hidden = false;
+  if (mode === 'saving'){ el.className = 'cloudstat saving'; el.textContent = 'Syncing…'; }
+  else if (mode === 'ok'){ el.className = 'cloudstat ok'; el.textContent = 'Cloud synced ' + t; }
+  else if (mode === 'fail'){ el.className = 'cloudstat fail'; el.textContent = 'Cloud sync failed — saved locally'; }
+  else { el.hidden = true; }
+}
+
+// Pulls this tenant's shared shift down from the cloud and, if found,
+// writes it into localStorage BEFORE boot() runs — so load() (called
+// from inside boot(), unchanged) picks it up exactly like it picks up
+// anything already saved locally. Nothing here touches boot()'s own logic.
+async function cloudPull(){
+  if (!supabaseClient || currentTenantId == null) return;
+  try{
+    setCloudStatus('saving');
+    var res = await supabaseClient
+      .from('dar_shifts')
+      .select('data, updated_at, updated_by')
+      .eq('tenant_id', currentTenantId)
+      .maybeSingle();
+    if (res.error){ setCloudStatus('fail'); return; }
+    if (res.data && res.data.data){
+      localStorage.setItem(KEY, JSON.stringify(res.data.data));
+      setCloudStatus('ok');
+    } else {
+      setCloudStatus('off');
+    }
+  }catch(e){ setCloudStatus('fail'); }
+}
+
+// Pushes whatever save() just wrote to localStorage up to the cloud.
+async function cloudPush(){
+  if (!supabaseClient || currentTenantId == null) return;
+  try{
+    var raw = localStorage.getItem(KEY);
+    if (!raw) return;
+    var parsed = JSON.parse(raw);
+    setCloudStatus('saving');
+    var res = await supabaseClient
+      .from('dar_shifts')
+      .upsert({
+        tenant_id: currentTenantId,
+        data: parsed,
+        updated_at: new Date().toISOString(),
+        updated_by: currentUserEmail,
+        session_id: cloudSessionId
+      }, { onConflict: 'tenant_id' });
+    if (res.error){ setCloudStatus('fail'); return; }
+    setCloudStatus('ok');
+  }catch(e){ setCloudStatus('fail'); }
+}
+
+// Debounced so a burst of keystrokes/edits collapses into one push,
+// the same way the header fields already debounce their own re-render.
+function scheduleCloudSave(){
+  if (!supabaseClient || currentTenantId == null) return;
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = setTimeout(cloudPush, 900);
+}
+
+// Applies a change that arrived from ANOTHER device in real time.
+// syncHeader() has to run before render() here: render() ends by calling
+// save(), and save() reads the header fields (client/date/start/end/guard)
+// straight back out of their DOM inputs — so without refreshing those
+// inputs first, that trailing save() would immediately overwrite the
+// just-applied remote values with whatever was still on screen.
+function applyCloudUpdate(row){
+  try{
+    localStorage.setItem(KEY, JSON.stringify(row.data));
+    load();
+    syncHeader();
+    render();
+    setCloudStatus('ok');
+    toast('Updated from ' + (row.updated_by || 'another device'));
+  }catch(e){}
+}
+
+// Live cross-device updates: when another device pushes a change for
+// this tenant, pull it in and redraw. Own writes are ignored via the
+// session id so a device never "updates" itself from its own push.
+function subscribeCloudRealtime(){
+  if (!supabaseClient || currentTenantId == null) return;
+  if (cloudChannel){ try{ supabaseClient.removeChannel(cloudChannel); }catch(e){} }
+  cloudChannel = supabaseClient
+    .channel('dar_shifts_' + currentTenantId)
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'dar_shifts', filter: 'tenant_id=eq.' + currentTenantId },
+      function(payload){
+        var row = payload.new;
+        if (!row || row.session_id === cloudSessionId) return;
+        applyCloudUpdate(row);
+      }
+    )
+    .subscribe();
 }
 
 // Resolves the signed-in user's membership for THIS dashboard's tenant.
@@ -580,8 +691,11 @@ async function checkAuthAndRender(){
     platformShowGate("That account doesn't have access to Strickland SOC. Signed out — contact your admin if this is unexpected.");
     return;
   }
+  currentUserEmail = session.user.email;
+  await cloudPull();
   platformShowDashboard(session.user.email);
   bootOnce();
+  subscribeCloudRealtime();
 }
 
 document.getElementById('login-form').addEventListener('submit', async function(e){
@@ -601,8 +715,10 @@ document.getElementById('login-form').addEventListener('submit', async function(
 
 document.getElementById('signout-btn').addEventListener('click', async function(){
   await supabaseClient.auth.signOut();
+  if (cloudChannel){ try{ supabaseClient.removeChannel(cloudChannel); }catch(e){} cloudChannel = null; }
   currentTenantId = null;
   document.getElementById('who-line').hidden = true;
+  document.getElementById('cloudStat').hidden = true;
   platformShowGate();
 });
 
@@ -656,7 +772,7 @@ function newStore(num){
     id:"s"+(seq++), num:String(num), r,
     mode:"work",
     mgr:"",
-    co:"", contact:"", cell:"", crew:"", ete:"", exit:"", calledOut:"",
+    co:"", contact:"", cell:"", crew:"", ete:"", exit:"", calledOut:"", cleaningCrew:"",
     alarmAt:"", alarmZone:"", alarmType:"", cams:"", dispatch:"", dispatchWho:"", resolution:"",
     esc:false, escNote:"",
     closed:false, closedAt:"", closedBy:"",
@@ -923,6 +1039,12 @@ function workBlock(st){
             <option value="yes" ${st.calledOut==="yes"?"selected":""}>Yes</option>
             <option value="no" ${st.calledOut==="no"?"selected":""}>No</option>
             <option value="na" ${st.calledOut==="na"?"selected":""}>N/A</option>
+          </select></label>
+        <label class="f"><span>Cleaning crew onsite?</span>
+          <select class="in" data-w="cleaningCrew">
+            <option value="" ${st.cleaningCrew===""?"selected":""}>—</option>
+            <option value="yes" ${st.cleaningCrew==="yes"?"selected":""}>Yes</option>
+            <option value="no" ${st.cleaningCrew==="no"?"selected":""}>No</option>
           </select></label>
       </div>
     </div>
@@ -1262,6 +1384,7 @@ function save(){
   if(archived){ setSaved("arc"); return; }
   try{ localStorage.setItem(KEY, JSON.stringify({S, seq})); setSaved("ok"); }
   catch(e){ setSaved("fail"); }
+  scheduleCloudSave();
 }
 
 function setSaved(mode){
@@ -1271,10 +1394,11 @@ function setSaved(mode){
   if(mode==="ok"){
     el.className = "saved ok";
     el.querySelector("span").textContent = "Saved "+t;
-    el.title = "Your shift is held inside this browser, on this computer. Nothing is sent anywhere. "+
+    el.title = "Your shift is held inside this browser, on this computer" +
+      (typeof supabaseClient !== "undefined" && supabaseClient ? ", and synced to your team's shared account so it follows your sign-in to another device" : ". Nothing is sent anywhere") + ". "+
       "If the tab closes, the browser crashes, or the machine reboots, reopen this file and the shift comes back exactly as you left it. "+
       "It saves itself every time you change something \u2014 there is no save button to forget. "+
-      "It is wiped if you clear browsing data or use a private window, so use Save a copy to keep the shift as a real file.";
+      (typeof supabaseClient !== "undefined" && supabaseClient ? "" : "It is wiped if you clear browsing data or use a private window, so use Save a copy to keep the shift as a real file.");
   }
   if(mode==="fail"){
     el.className = "saved fail";
