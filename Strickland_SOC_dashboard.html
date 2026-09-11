@@ -494,7 +494,7 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
     <div class="hits" style="max-height:none">
       <button type="button" class="choice" id="rNew">
         <span class="c1">Start a new shift</span>
-        <span class="c2">Clears every location and log entry, moves the shift date to today, and keeps the operator name and on/off duty hours.</span>
+        <span class="c2">Clears every location and log entry, and resets the shift date, operator name, and on/off duty hours to start fresh.</span>
       </button>
       <button type="button" class="choice" id="rAll">
         <span class="c1">Clear everything</span>
@@ -1435,8 +1435,8 @@ function openReset(){
       ". You can undo a reset until you start entering the next shift, but save a copy first if it has not been sent yet."
     : "Nothing has been entered yet, so this only resets the shift header.";
   document.getElementById("rNew").querySelector(".c2").textContent = std
-    ? "Clears the activity log and narrative, moves the shift date to today, and keeps the client, site, and post details so the same post is ready to go."
-    : "Clears every location and log entry, moves the shift date to today, and keeps the operator name and on/off duty hours.";
+    ? "Clears the activity log and narrative, resets the shift date, officer name, and on/off duty hours, and keeps the client, site, and post details so the same post is ready to go."
+    : "Clears every location and log entry, and resets the shift date, operator name, and on/off duty hours to start fresh.";
   rdlg.showModal();
 }
 
@@ -1445,16 +1445,15 @@ function doReset(mode){
   undoSnap = JSON.stringify({S, seq});
   const keep = mode === "new";
   const kind = S.kind;
-  const g = keep ? S.guard : "";
-  const c = keep ? S.client : "Cracker Barrel — SOC";
   const sc = keep ? S.std.client : "";
   const site = keep ? S.std.site : "", addr = keep ? S.std.addr : "", cs = keep ? S.std.cityst : "";
   const post = keep ? S.std.post : "";
-  const st = keep ? S.start : "22:00", en = keep ? S.end : "06:00";
   S = blankShift();
   S.kind = kind;
-  S.guard = g; S.client = c; S.start = st; S.end = en;
-  // A standard post keeps its site details between shifts — only the log and narrative clear.
+  // Shift date, on/off duty hours, and operator always start blank — with a
+  // shared login there's no one operator's info to carry forward. Report
+  // name/client stays at its default (still editable by hand). A standard
+  // post keeps its site details between shifts — only the log and narrative clear.
   Object.assign(S.std, {client:sc, site, addr, cityst:cs, post});
   seq = 1; active = null;
   syncHeader();
