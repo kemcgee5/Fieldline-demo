@@ -408,6 +408,7 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
 
   <div class="acts">
     <div class="saved" id="saved" tabindex="0" role="status"><i></i><span>Saved</span></div>
+    <button class="btn ghost sm" id="bStartShift">Start Shift</button>
     <button class="btn ghost sm" id="bEndShift">End Shift</button>
     <button class="btn ghost sm wipe" id="bReset">Reset</button>
     <button class="btn ghost sm" id="bFile">Save a copy</button>
@@ -718,9 +719,16 @@ function allEntries(){
   } else {
     S.stores.forEach(st => st.log.forEach(e => rows.push({...e, sid:st.id, snum:st.num, slab:"CB"+pad4(st.num), sst:statusOf(st)})));
   }
-  (S.shiftEvents||[]).forEach(e => rows.push({...e, sid:"shift", snum:null, slab:"Shift", sst:"shift", type:"Shift handoff"}));
+  (S.shiftEvents||[]).forEach(e => rows.push({...e, sid:"shift", snum:null, slab:"Shift", sst:"shift", type: e.kind==="start" ? "Shift start" : "Shift end"}));
   rows.sort((a,b)=> (a.at||"").localeCompare(b.at||""));
   return rows;
+}
+
+// Entry text with who logged it appended, e.g. "Alarm cleared — J. Operator".
+// Shift start/end rows already name the operator in the note itself, so
+// they're left alone here to avoid saying the name twice.
+function noteWithBy(e){
+  return e.note + (e.by && e.sid !== "shift" ? " — " + e.by : "");
 }
 
 /* ============================================================
@@ -866,7 +874,7 @@ function cardEl(st){
     const txt = (note.value||"").trim();
     if(!txt){ toast("Enter what happened"); note.focus(); return; }
     const at = time.value ? stampFor(time.value) : nowStamp();
-    st.log.push({ id:"e"+(seq++), at, type:type.value, note:txt });
+    st.log.push({ id:"e"+(seq++), at, type:type.value, note:txt, by:(S.guard||"").trim() });
     note.value=""; time.value="";
     render();
     const nx = document.querySelector('#card-'+st.id+' [data-c="note"]'); if(nx) nx.focus();
@@ -960,7 +968,7 @@ function logRows(st){
     <div class="row">
       <div class="t">${esc(tOf(e.at))}${rolls(e.at)?'<span class="d">'+esc(dOf(e.at))+'</span>':''}</div>
       <div class="ty">${esc(e.type)}</div>
-      <div class="n">${esc(e.note)}</div>
+      <div class="n">${esc(noteWithBy(e))}</div>
       <button class="x no-print" data-del="${e.id}" title="Delete entry" aria-label="Delete entry">×</button>
     </div>`).join("");
 }
@@ -1042,7 +1050,7 @@ function stdCardEl(){
     const txt = (note.value||"").trim();
     if(!txt){ toast("Enter the details of the activity"); note.focus(); return; }
     const at = time.value ? stampFor(time.value) : nowStamp();
-    d.log.push({ id:"e"+(seq++), at, type:type.value, note:txt });
+    d.log.push({ id:"e"+(seq++), at, type:type.value, note:txt, by:(S.guard||"").trim() });
     note.value=""; time.value="";
     render();
     const nx = document.querySelector('#card-std [data-c="note"]'); if(nx) nx.focus();
@@ -1068,7 +1076,7 @@ function stdLogRows(d){
     <div class="row">
       <div class="t">${esc(tOf(e.at))}${rolls(e.at)?'<span class="d">'+esc(dOf(e.at))+'</span>':''}</div>
       <div class="ty">${esc(e.type)}</div>
-      <div class="n">${esc(e.note)}</div>
+      <div class="n">${esc(noteWithBy(e))}</div>
       <button class="x no-print" data-del="${e.id}" title="Delete entry" aria-label="Delete entry">×</button>
     </div>`).join("");
 }
@@ -1094,7 +1102,7 @@ function renderSpine(){
       '<span class="tk-time">'+esc(tOf(e.at))+'</span>'+
       '<span class="tk-dot"><i></i></span>'+
       '<span class="tk-body"><span class="tk-store">'+esc(e.slab)+'</span>'+
-      '<span class="tk-note">'+esc(e.note)+'</span></span></button>';
+      '<span class="tk-note">'+esc(noteWithBy(e))+'</span></span></button>';
   });
   rail.innerHTML = html;
   rail.querySelectorAll("[data-go]").forEach(b=> b.onclick = ()=>{ active = b.dataset.go; render(); });
@@ -1146,7 +1154,7 @@ function renderPrint(){
     '<div class="eyebrow" style="color:#000;font-size:9pt;letter-spacing:.14em;border-bottom:1px solid #000;padding-bottom:5px;margin-bottom:9px">Consolidated shift log — all locations, chronological</div>'+
     (rows.length ? rows.map(e=>
       '<div class="mrow"><div class="t">'+esc(tOf(e.at))+'</div><div class="s">'+esc(e.slab)+'</div>'+
-      '<div class="ty">'+esc(e.type)+'</div><div>'+esc(e.note)+'</div></div>').join("")
+      '<div class="ty">'+esc(e.type)+'</div><div>'+esc(noteWithBy(e))+'</div></div>').join("")
       : '<div style="font-size:9pt;color:#555">No entries recorded this shift.</div>')+
     '<div class="sig"><div>SOC operator signature</div><div>Reviewed by — Strickland HQ</div></div>'+
     '<div class="pfoot"><span>Strickland Security &amp; Safety Solutions, LLC — internal shift record</span>'+
@@ -1386,6 +1394,20 @@ function syncKindUI(){
 const UKEY = KEY + "_undo";
 const rdlg = document.getElementById("rdlg");
 
+function startShift(){
+  const g = (S.guard||"").trim();
+  if(!g){
+    toast("Enter the operator name before starting shift.");
+    document.getElementById("mGuard").focus();
+    return;
+  }
+  if(!S.shiftEvents) S.shiftEvents = [];
+  S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " started shift — signed on", guard: g, kind:"start" });
+  save();
+  render();
+  toast("Shift started for " + g);
+}
+
 function endShift(){
   const g = (S.guard||"").trim();
   if(!g){
@@ -1394,7 +1416,7 @@ function endShift(){
     return;
   }
   if(!S.shiftEvents) S.shiftEvents = [];
-  S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " ended shift — handed off", guard: g });
+  S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " ended shift — handed off", guard: g, kind:"end" });
   S.guard = "";
   document.getElementById("mGuard").value = "";
   save();
@@ -1551,6 +1573,7 @@ function boot(){
     document.getElementById(id).addEventListener("input", headerEdited));
 
   document.getElementById("bFile").onclick = saveCopy;
+  document.getElementById("bStartShift").onclick = startShift;
   document.getElementById("bEndShift").onclick = endShift;
   document.getElementById("bReset").onclick = openReset;
   document.querySelectorAll(".rptmode button").forEach(b=> b.onclick = ()=> setKind(b.dataset.kind));
