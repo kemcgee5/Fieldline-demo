@@ -1486,8 +1486,6 @@ function tick(){
   document.getElementById("clock").textContent = p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds());
 }
 
-function boot(){
-if(!loadSeed() && !load()) S = blankShift();
 function syncHeader(){
   document.getElementById("mClient").value = curClient();
   document.getElementById("mDate").value = S.date;
@@ -1495,7 +1493,6 @@ function syncHeader(){
   document.getElementById("mEnd").value = S.end;
   document.getElementById("mGuard").value = S.guard;
 }
-syncHeader();
 /* Header fields save on every keystroke. The heavy rebuild is debounced and only
    redraws the store cards when the shift date or start time actually moves, so
    editing a header field can never yank the DOM out from under the next click. */
@@ -1509,30 +1506,35 @@ function headerEdited(){
     else { renderSpine(); renderPrint(); }
   }, 260);
 }
-["mClient","mDate","mStart","mEnd","mGuard"].forEach(id=>
-  document.getElementById(id).addEventListener("input", headerEdited));
 
-document.getElementById("bFile").onclick = saveCopy;
-document.getElementById("bReset").onclick = openReset;
-document.querySelectorAll(".rptmode button").forEach(b=> b.onclick = ()=> setKind(b.dataset.kind));
-document.getElementById("rX").onclick = ()=> rdlg.close();
-document.getElementById("rSave").onclick = saveCopy;
-document.getElementById("rNew").onclick = ()=> doReset("new");
-document.getElementById("rAll").onclick = ()=> doReset("all");
-// A saved copy is an archive: resetting it would only confuse, since reopening the
-// file restores the shift baked into it.
-if(archived) document.getElementById("bReset").hidden = true;
-// Offer the undo again if the page was reloaded right after a reset.
-if(!archived && !S.stores.length && !(isStd() && S.std.log.length)){
-  try{ if(localStorage.getItem(UKEY)) showUndo("new"); }catch(err){}
-}
-document.getElementById("bPrintAll").onclick = ()=> printScope("all");
-document.getElementById("bPrintEsc").onclick = ()=> printScope("esc");
-document.getElementById("bEmail").onclick = emailIt;
+function boot(){
+  if(!loadSeed() && !load()) S = blankShift();
+  syncHeader();
 
-lastDS = S.date + "|" + S.start;
-tick(); setInterval(tick, 1000);
-render();
+  ["mClient","mDate","mStart","mEnd","mGuard"].forEach(id=>
+    document.getElementById(id).addEventListener("input", headerEdited));
+
+  document.getElementById("bFile").onclick = saveCopy;
+  document.getElementById("bReset").onclick = openReset;
+  document.querySelectorAll(".rptmode button").forEach(b=> b.onclick = ()=> setKind(b.dataset.kind));
+  document.getElementById("rX").onclick = ()=> rdlg.close();
+  document.getElementById("rSave").onclick = saveCopy;
+  document.getElementById("rNew").onclick = ()=> doReset("new");
+  document.getElementById("rAll").onclick = ()=> doReset("all");
+  // A saved copy is an archive: resetting it would only confuse, since reopening the
+  // file restores the shift baked into it.
+  if(archived) document.getElementById("bReset").hidden = true;
+  // Offer the undo again if the page was reloaded right after a reset.
+  if(!archived && !S.stores.length && !(isStd() && S.std.log.length)){
+    try{ if(localStorage.getItem(UKEY)) showUndo("new"); }catch(err){}
+  }
+  document.getElementById("bPrintAll").onclick = ()=> printScope("all");
+  document.getElementById("bPrintEsc").onclick = ()=> printScope("esc");
+  document.getElementById("bEmail").onclick = emailIt;
+
+  lastDS = S.date + "|" + S.start;
+  tick(); setInterval(tick, 1000);
+  render();
 }
 checkAuthAndRender();
 </script>
