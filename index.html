@@ -157,14 +157,88 @@
 
   footer.note{ margin-top:20px; font-size:12px; color:var(--muted); text-align:center; }
 
+  .schedule-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
+  .btn-add{
+    font-family:"IBM Plex Sans", sans-serif; font-size:13px; font-weight:600;
+    background:var(--accent); color:var(--surface-2); border:none; border-radius:8px;
+    padding:8px 14px; cursor:pointer; white-space:nowrap;
+  }
+  .btn-add:hover{ filter:brightness(0.94); }
+  .add-form{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:12px;
+    background:var(--page); border:1px solid var(--line); border-radius:10px;
+    padding:16px; margin:14px 0 18px;
+  }
+  .add-form .field{ display:flex; flex-direction:column; gap:5px; }
+  .add-form label{ font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+  .add-form input, .add-form select{
+    font-family:"IBM Plex Sans", sans-serif; font-size:13.5px; color:var(--ink);
+    background:var(--surface-2); border:1px solid var(--line-strong); border-radius:6px;
+    padding:7px 9px;
+  }
+  .form-actions{ grid-column:1 / -1; display:flex; gap:10px; margin-top:2px; }
+  .btn-save{
+    font-family:"IBM Plex Sans", sans-serif; font-size:13px; font-weight:600;
+    background:var(--accent); color:var(--surface-2); border:none; border-radius:7px;
+    padding:8px 16px; cursor:pointer;
+  }
+  .btn-cancel{
+    font-family:"IBM Plex Sans", sans-serif; font-size:13px; font-weight:500;
+    background:transparent; color:var(--ink-2); border:1px solid var(--line-strong); border-radius:7px;
+    padding:8px 16px; cursor:pointer;
+  }
+  .form-error{ grid-column:1 / -1; font-size:12.5px; color:var(--critical); margin:0; }
+
+  @media (max-width:720px){ .add-form{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:480px){ .add-form{ grid-template-columns:1fr; } }
+
   @media (max-width:860px){
     .kpis{ grid-template-columns:repeat(2,1fr); }
     .grid-main{ grid-template-columns:1fr; }
     table#schedule{ display:block; overflow-x:auto; }
   }
+
+  /* ---- Sign-in gate ---- */
+  .auth-gate{
+    position:fixed; inset:0; background:var(--page); z-index:50;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .login-card{
+    width:100%; max-width:340px; background:var(--surface); border:1px solid var(--line);
+    border-radius:14px; padding:28px 26px; box-shadow:var(--shadow);
+  }
+  .login-card h2{ font-family:"Fraunces", serif; font-weight:600; font-size:21px; margin:0 0 4px; }
+  .login-sub{ font-size:12.5px; color:var(--muted); margin:0 0 20px; }
+  .login-card .field{ display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+  .login-card label{ font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+  .login-card input{
+    font-family:"IBM Plex Sans", sans-serif; font-size:14px; color:var(--ink);
+    background:var(--surface-2); border:1px solid var(--line-strong); border-radius:7px; padding:9px 10px;
+  }
+  .login-hint{ font-size:11.5px; color:var(--muted); margin:14px 0 0; line-height:1.5; }
+  .who-line{ display:flex; align-items:center; gap:10px; }
+  .who-line span{ font-size:12px; color:var(--muted); }
+  .btn-signout{
+    font-family:"IBM Plex Sans", sans-serif; font-size:12px; font-weight:500;
+    background:transparent; color:var(--ink-2); border:1px solid var(--line-strong); border-radius:7px;
+    padding:5px 11px; cursor:pointer;
+  }
+  [hidden]{ display:none !important; }
 </style>
 
-<div class="wrap">
+<div id="auth-gate" class="auth-gate" hidden>
+  <form id="login-form" class="login-card">
+    <h2>Sign in</h2>
+    <p class="login-sub">Fieldline — Strickly McGee Solutions</p>
+    <div class="field"><label for="login-email">Email</label><input id="login-email" type="email" required autocomplete="username"></div>
+    <div class="field"><label for="login-password">Password</label><input id="login-password" type="password" required autocomplete="current-password"></div>
+    <button type="submit" class="btn-save" style="width:100%;">Sign In</button>
+    <p id="login-error" class="form-error" hidden></p>
+    <p id="login-hint" class="login-hint">Accounts are created by Strickly McGee Solutions — ask your admin for access.</p>
+  </form>
+</div>
+
+<div class="wrap" id="dashboard-content">
 
   <header class="bar">
     <div class="brand-block">
@@ -178,6 +252,10 @@
         <option value="harbor">Harbor Security Patrol</option>
         <option value="meridian">Meridian Field Services</option>
       </select>
+      <div class="who-line" id="who-line" hidden>
+        <span id="who-email"></span>
+        <button type="button" id="signout-btn" class="btn-signout">Sign out</button>
+      </div>
     </div>
   </header>
 
@@ -202,8 +280,33 @@
   </div>
 
   <div class="card">
-    <h2 id="schedule-title">Today's Schedule</h2>
-    <p class="card-sub" id="schedule-sub">Live view — same table your dispatcher and your owner both look at.</p>
+    <div class="schedule-head">
+      <div>
+        <h2 id="schedule-title">Today's Schedule</h2>
+        <p class="card-sub" id="schedule-sub">Live view — same table your dispatcher and your owner both look at.</p>
+      </div>
+      <button id="add-entry-btn" class="btn-add" type="button">+ Add Entry</button>
+    </div>
+    <form id="add-entry-form" class="add-form" hidden>
+      <div class="field"><label for="f-time">Time</label><input id="f-time" type="text" placeholder="14:00" required></div>
+      <div class="field"><label for="f-client">Client</label><input id="f-client" type="text" placeholder="Client name" required></div>
+      <div class="field"><label for="f-location">Location</label><input id="f-location" type="text" placeholder="Location" required></div>
+      <div class="field"><label for="f-assigned">Assigned</label><input id="f-assigned" type="text" placeholder="Name" required></div>
+      <div class="field">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="scheduled">Scheduled</option>
+          <option value="progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="flagged">Flagged</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-save">Save Entry</button>
+        <button type="button" id="add-entry-cancel" class="btn-cancel">Cancel</button>
+      </div>
+      <p id="add-entry-error" class="form-error" hidden></p>
+    </form>
     <table id="schedule">
       <thead>
         <tr><th>Time</th><th>Client</th><th>Location</th><th>Assigned</th><th>Status</th></tr>
@@ -223,11 +326,16 @@
   // Never put the "service_role" key in client-side code like this.
   var SUPABASE_URL = 'https://uanghzuketepjencbebw.supabase.co';
   var SUPABASE_ANON_KEY = 'sb_publishable_kx-z6hgtOSgXEl6wzBm3kg_NJqfnZQI';
+  // This is the tenant row (see the "tenants" table) this deployed page belongs to.
+  // Every read/write this page makes is scoped to this tenant once someone signs in.
+  var TENANT_SLUG = 'fieldline-demo';
 
   var supabaseClient = null;
   if (SUPABASE_URL.indexOf('YOUR_') !== 0 && window.supabase) {
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
+
+  var currentTenantId = null; // resolved after sign-in, from the "memberships" table
 
   var DATA = {
     harbor: {
@@ -369,11 +477,15 @@
   async function fetchLiveSchedule(companyKey){
     if (!supabaseClient) return null;
     try {
-      var result = await supabaseClient
+      var query = supabaseClient
         .from('schedule')
         .select('time, client, location, assigned, status')
         .eq('company', companyKey)
         .order('time');
+      // Once auth is wired up, currentTenantId is set and every read is scoped to it —
+      // this .eq is belt-and-suspenders on top of the RLS policy, not a substitute for it.
+      if (currentTenantId != null) query = query.eq('tenant_id', currentTenantId);
+      var result = await query;
       if (result.error) { console.error('Supabase error:', result.error.message); return null; }
       if (!result.data || result.data.length === 0) return null;
       return result.data;
@@ -381,6 +493,87 @@
       console.error('Supabase fetch failed:', e);
       return null;
     }
+  }
+
+  // ---- Auth gate: sign in, then resolve which tenant this account belongs to ----
+  var authGate = document.getElementById('auth-gate');
+  var dashboardContent = document.getElementById('dashboard-content');
+  var loginForm = document.getElementById('login-form');
+  var loginError = document.getElementById('login-error');
+  var loginHint = document.getElementById('login-hint');
+  var whoLine = document.getElementById('who-line');
+  var whoEmail = document.getElementById('who-email');
+
+  function showGate(message){
+    dashboardContent.hidden = true;
+    authGate.hidden = false;
+    if (message){ loginError.textContent = message; loginError.hidden = false; }
+  }
+  function showDashboard(email){
+    authGate.hidden = true;
+    dashboardContent.hidden = false;
+    whoLine.hidden = false;
+    whoEmail.textContent = email;
+  }
+
+  // Resolves the signed-in user's membership for THIS dashboard's tenant.
+  // Returns the tenant_id if they're a member, or null if they aren't (or aren't signed in).
+  async function resolveTenantForCurrentUser(){
+    var membership = await supabaseClient
+      .from('memberships')
+      .select('tenant_id, tenants!inner(slug)')
+      .eq('tenants.slug', TENANT_SLUG)
+      .maybeSingle();
+    if (membership.error || !membership.data) return null;
+    return membership.data.tenant_id;
+  }
+
+  async function checkAuthAndRender(){
+    if (!supabaseClient){
+      // No Supabase configured yet — stay in open demo mode, no login required.
+      authGate.hidden = true;
+      dashboardContent.hidden = false;
+      render(document.getElementById('company').value);
+      return;
+    }
+    var sessionRes = await supabaseClient.auth.getSession();
+    var session = sessionRes.data && sessionRes.data.session;
+    if (!session){ showGate(); return; }
+
+    currentTenantId = await resolveTenantForCurrentUser();
+    if (currentTenantId == null){
+      await supabaseClient.auth.signOut();
+      showGate("That account doesn't have access to Fieldline. Signed out — contact your admin if this is unexpected.");
+      return;
+    }
+    showDashboard(session.user.email);
+    render(document.getElementById('company').value);
+  }
+
+  if (loginForm){
+    loginForm.addEventListener('submit', async function(e){
+      e.preventDefault();
+      loginError.hidden = true;
+      var email = document.getElementById('login-email').value.trim();
+      var password = document.getElementById('login-password').value;
+      var result = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
+      if (result.error){
+        loginError.textContent = result.error.message;
+        loginError.hidden = false;
+        return;
+      }
+      await checkAuthAndRender();
+    });
+  }
+
+  var signoutBtn = document.getElementById('signout-btn');
+  if (signoutBtn){
+    signoutBtn.addEventListener('click', async function(){
+      await supabaseClient.auth.signOut();
+      currentTenantId = null;
+      whoLine.hidden = true;
+      showGate();
+    });
   }
 
   function setBadge(isLive){
@@ -410,7 +603,64 @@
     renderSchedule(liveRows || d.schedule);
   }
 
+  // ---- Add Entry form: writes a new row straight to Supabase ----
+  var addBtn = document.getElementById('add-entry-btn');
+  var addForm = document.getElementById('add-entry-form');
+  var addError = document.getElementById('add-entry-error');
+
+  function closeAddForm(){
+    addForm.hidden = true;
+    addForm.reset();
+    addBtn.hidden = false;
+    addError.hidden = true;
+  }
+
+  addBtn.addEventListener('click', function(){
+    addForm.hidden = false;
+    addBtn.hidden = true;
+    document.getElementById('f-time').focus();
+  });
+  document.getElementById('add-entry-cancel').addEventListener('click', closeAddForm);
+
+  addForm.addEventListener('submit', async function(e){
+    e.preventDefault();
+    addError.hidden = true;
+
+    if (!supabaseClient){
+      addError.textContent = "Can't save yet — fill in SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file first.";
+      addError.hidden = false;
+      return;
+    }
+
+    if (currentTenantId == null){
+      addError.textContent = "Can't save — sign in first.";
+      addError.hidden = false;
+      return;
+    }
+
+    var companyKey = document.getElementById('company').value;
+    var newRow = {
+      company: companyKey,
+      tenant_id: currentTenantId,
+      time: document.getElementById('f-time').value.trim(),
+      client: document.getElementById('f-client').value.trim(),
+      location: document.getElementById('f-location').value.trim(),
+      assigned: document.getElementById('f-assigned').value.trim(),
+      status: document.getElementById('f-status').value
+    };
+
+    var result = await supabaseClient.from('schedule').insert(newRow);
+    if (result.error){
+      addError.textContent = 'Could not save: ' + result.error.message;
+      addError.hidden = false;
+      return;
+    }
+
+    closeAddForm();
+    render(companyKey);
+  });
+
   document.getElementById('company').addEventListener('change', function(e){ render(e.target.value); });
-  render('harbor');
+  checkAuthAndRender();
 })();
 </script>
