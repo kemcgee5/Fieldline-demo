@@ -340,6 +340,14 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
 .who{display:flex;align-items:center;gap:8px}
 .who[hidden]{display:none}
 .who span{font-family:var(--data);font-size:11px;color:var(--fog);white-space:nowrap}
+
+/* ---------- shift handoff / close-out ---------- */
+.card.is-closed{opacity:.55}
+.card.is-closed .cbnum,.card.is-closed .cbcity{text-decoration:line-through}
+.closed-note{font-family:var(--data);font-size:11px;color:var(--fog);margin-top:2px}
+.tab.is-closed .num,.tab.is-closed .cty{text-decoration:line-through;opacity:.6}
+.tick.shift .tk-dot i{background:var(--chalk);border-color:var(--chalk)}
+.tick.shift .tk-note{color:var(--fog)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -400,6 +408,7 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
 
   <div class="acts">
     <div class="saved" id="saved" tabindex="0" role="status"><i></i><span>Saved</span></div>
+    <button class="btn ghost sm" id="bEndShift">End Shift</button>
     <button class="btn ghost sm wipe" id="bReset">Reset</button>
     <button class="btn ghost sm" id="bFile">Save a copy</button>
     <button class="btn" id="bPrintAll">Shift DAR PDF</button>
@@ -622,7 +631,8 @@ function blankShift(){
     kind:"soc",
     client:"Cracker Barrel — SOC", date: iso(d), start:"22:00", end:"06:00", guard:"",
     stores:[],
-    std: blankStd()
+    std: blankStd(),
+    shiftEvents:[]
   };
 }
 function blankStd(){
@@ -648,6 +658,7 @@ function newStore(num){
     co:"", contact:"", cell:"", crew:"", ete:"", exit:"", calledOut:"",
     alarmAt:"", alarmZone:"", alarmType:"", cams:"", dispatch:"", dispatchWho:"", resolution:"",
     esc:false, escNote:"",
+    closed:false, closedAt:"", closedBy:"",
     log:[]
   };
 }
@@ -707,6 +718,7 @@ function allEntries(){
   } else {
     S.stores.forEach(st => st.log.forEach(e => rows.push({...e, sid:st.id, snum:st.num, slab:"CB"+pad4(st.num), sst:statusOf(st)})));
   }
+  (S.shiftEvents||[]).forEach(e => rows.push({...e, sid:"shift", snum:null, slab:"Shift", sst:"shift", type:"Shift handoff"}));
   rows.sort((a,b)=> (a.at||"").localeCompare(b.at||""));
   return rows;
 }
@@ -721,7 +733,7 @@ function renderTabs(){
   if(isStd()) return;
   S.stores.forEach(st => {
     const b = document.createElement("button");
-    b.className = "tab " + statusOf(st);
+    b.className = "tab " + statusOf(st) + (st.closed ? " is-closed" : "");
     b.setAttribute("role","tab");
     b.setAttribute("aria-selected", st.id===active ? "true":"false");
     b.innerHTML = '<span class="st"></span><span class="num">CB'+pad4(st.num)+'</span>'+
@@ -764,7 +776,7 @@ function runner(label){
 
 function cardEl(st){
   const c = document.createElement("section");
-  c.className = "card" + (st.id===active ? " print-target":"") + (st.esc ? " is-esc":"");
+  c.className = "card" + (st.id===active ? " print-target":"") + (st.esc ? " is-esc":"") + (st.closed ? " is-closed":"");
   c.id = "card-"+st.id;
   if(st.id!==active) c.classList.add("hide-screen");
   const r = st.r, exc = exceptions(st);
@@ -773,7 +785,9 @@ function cardEl(st){
     <div class="card-h">
       <div class="cbnum">CB${pad4(st.num)}</div>
       <div class="cbcity">${esc(r.c||"Unknown")}, ${esc(r.s||"")}</div>
+      ${st.closed ? '<div class="closed-note">Closed '+esc(tOf(st.closedAt))+(st.closedBy?' by '+esc(st.closedBy):'')+'</div>' : ''}
       <div class="sp no-print">
+        <button class="btn ghost sm" data-act="close">${st.closed ? "Reopen" : "Close out"}</button>
         <button class="btn ghost sm" data-act="pdf1">This location PDF</button>
       </div>
     </div>
@@ -863,6 +877,12 @@ function cardEl(st){
       if(a==="add") doAdd();
       if(a==="now"){ const d=new Date(); time.value = p2(d.getHours())+":"+p2(d.getMinutes()); note.focus(); }
       if(a==="pdf1"){ active = st.id; printScope("one"); }
+      if(a==="close"){
+        st.closed = !st.closed;
+        if(st.closed){ st.closedAt = nowStamp(); st.closedBy = (S.guard||"").trim() || ""; }
+        else { st.closedAt = ""; st.closedBy = ""; }
+        save(); render();
+      }
       if(a==="rm"){ if(confirm("Remove CB"+pad4(st.num)+" and its "+st.log.length+" log entries from this shift?")){
         S.stores = S.stores.filter(x=>x.id!==st.id);
         active = S.stores.length ? S.stores[0].id : null; render(); } }
@@ -1366,6 +1386,22 @@ function syncKindUI(){
 const UKEY = KEY + "_undo";
 const rdlg = document.getElementById("rdlg");
 
+function endShift(){
+  const g = (S.guard||"").trim();
+  if(!g){
+    toast("Enter the operator name before ending shift.");
+    document.getElementById("mGuard").focus();
+    return;
+  }
+  if(!S.shiftEvents) S.shiftEvents = [];
+  S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " ended shift — handed off", guard: g });
+  S.guard = "";
+  document.getElementById("mGuard").value = "";
+  save();
+  render();
+  toast("Shift ended for " + g + " — ready for the next operator");
+}
+
 function openReset(){
   const std = isStd();
   const e = std ? S.std.log.length : S.stores.reduce((a,s)=>a+s.log.length, 0);
@@ -1515,6 +1551,7 @@ function boot(){
     document.getElementById(id).addEventListener("input", headerEdited));
 
   document.getElementById("bFile").onclick = saveCopy;
+  document.getElementById("bEndShift").onclick = endShift;
   document.getElementById("bReset").onclick = openReset;
   document.querySelectorAll(".rptmode button").forEach(b=> b.onclick = ()=> setKind(b.dataset.kind));
   document.getElementById("rX").onclick = ()=> rdlg.close();
