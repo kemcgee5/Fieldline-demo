@@ -205,6 +205,11 @@ main.stage{padding:0 0 80px;min-width:0}
   padding:11px 20px;border-radius:2px;opacity:0;pointer-events:none;transition:.22s;z-index:200;border-left:3px solid var(--red)}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 
+.sigpad-wrap{position:relative;background:#fff;border:1px solid var(--line2);border-radius:2px}
+#sigPad{display:block;width:100%;height:170px;touch-action:none;cursor:crosshair;border-radius:2px}
+.sigpad-line{position:absolute;left:14px;right:14px;bottom:28px;border-top:1px solid #999;
+  font-family:var(--disp);text-transform:uppercase;letter-spacing:.1em;font-size:9px;color:#999;
+  padding-top:3px;pointer-events:none}
 dialog.pick{background:var(--panel);color:var(--chalk);border:1px solid var(--line2);border-top:2px solid var(--red);
   padding:0;width:min(420px,92vw);border-radius:2px}
 dialog.pick::backdrop{background:rgba(0,0,0,.72)}
@@ -305,6 +310,11 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
   .sig{margin-top:20px;display:flex;gap:34px;page-break-inside:avoid}
   .sig div{flex:1;border-top:1px solid #000;padding-top:4px;font-family:var(--disp);
     text-transform:uppercase;letter-spacing:.1em;font-size:8pt;color:#555}
+  .sig-cap{display:flex;align-items:flex-end;gap:14px;margin-top:14px;page-break-inside:avoid}
+  .sig-cap img{height:44pt;width:auto;display:block;border-bottom:1px solid #000}
+  .sig-cap-meta{font-family:var(--disp);text-transform:uppercase;letter-spacing:.09em;
+    font-size:8pt;color:#333;padding-bottom:4px}
+  .sig-cap-meta span{display:block;color:#777;font-size:7.5pt;letter-spacing:.06em;margin-top:1px}
 
   /* scoped printing */
   body[data-scope="one"] .card:not(.print-target){display:none!important}
@@ -512,6 +522,24 @@ dialog.pick p{font-size:12.5px;color:var(--fog);margin:0 0 12px}
   </div>
 </dialog>
 
+<dialog class="pick" id="sigdlg">
+  <div class="dh">
+    <h3>Signature required</h3>
+    <p id="sigWho">Sign below to confirm the shift handoff.</p>
+  </div>
+  <div class="db">
+    <div class="sigpad-wrap">
+      <canvas id="sigPad" width="560" height="170"></canvas>
+      <div class="sigpad-line">Sign above</div>
+    </div>
+    <div class="dact">
+      <button type="button" class="btn ghost sm" id="sigClear">Clear</button>
+      <button type="button" class="btn ghost sm" id="sigCancel">Cancel</button>
+      <button type="button" class="btn sm" id="sigDone">Done</button>
+    </div>
+  </div>
+</dialog>
+
 </div><!-- /#dashboard-content -->
 
 <script>
@@ -531,6 +559,7 @@ if (SUPABASE_URL.indexOf('YOUR_') !== 0 && window.supabase) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 var currentTenantId = null;
+var currentUserId = null;
 var currentUserEmail = null;
 var cloudSessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 var cloudSaveTimer = null;
@@ -569,18 +598,20 @@ function setCloudStatus(mode){
   else { el.hidden = true; }
 }
 
-// Pulls this tenant's shared shift down from the cloud and, if found,
+// Pulls THIS LOGIN's shared shift down from the cloud and, if found,
 // writes it into localStorage BEFORE boot() runs — so load() (called
 // from inside boot(), unchanged) picks it up exactly like it picks up
 // anything already saved locally. Nothing here touches boot()'s own logic.
+// Scoped to currentUserId (the signed-in account), not the tenant, so a
+// different login is never affected by this one's data.
 async function cloudPull(){
-  if (!supabaseClient || currentTenantId == null) return;
+  if (!supabaseClient || currentUserId == null) return;
   try{
     setCloudStatus('saving');
     var res = await supabaseClient
       .from('dar_shifts')
       .select('data, updated_at, updated_by')
-      .eq('tenant_id', currentTenantId)
+      .eq('user_id', currentUserId)
       .maybeSingle();
     if (res.error){ setCloudStatus('fail'); return; }
     if (res.data && res.data.data){
@@ -592,9 +623,10 @@ async function cloudPull(){
   }catch(e){ setCloudStatus('fail'); }
 }
 
-// Pushes whatever save() just wrote to localStorage up to the cloud.
+// Pushes whatever save() just wrote to localStorage up to the cloud,
+// under THIS LOGIN's row only.
 async function cloudPush(){
-  if (!supabaseClient || currentTenantId == null) return;
+  if (!supabaseClient || currentUserId == null) return;
   try{
     var raw = localStorage.getItem(KEY);
     if (!raw) return;
@@ -603,12 +635,13 @@ async function cloudPush(){
     var res = await supabaseClient
       .from('dar_shifts')
       .upsert({
+        user_id: currentUserId,
         tenant_id: currentTenantId,
         data: parsed,
         updated_at: new Date().toISOString(),
         updated_by: currentUserEmail,
         session_id: cloudSessionId
-      }, { onConflict: 'tenant_id' });
+      }, { onConflict: 'user_id' });
     if (res.error){ setCloudStatus('fail'); return; }
     setCloudStatus('ok');
   }catch(e){ setCloudStatus('fail'); }
@@ -617,7 +650,7 @@ async function cloudPush(){
 // Debounced so a burst of keystrokes/edits collapses into one push,
 // the same way the header fields already debounce their own re-render.
 function scheduleCloudSave(){
-  if (!supabaseClient || currentTenantId == null) return;
+  if (!supabaseClient || currentUserId == null) return;
   clearTimeout(cloudSaveTimer);
   cloudSaveTimer = setTimeout(cloudPush, 900);
 }
@@ -639,16 +672,18 @@ function applyCloudUpdate(row){
   }catch(e){}
 }
 
-// Live cross-device updates: when another device pushes a change for
-// this tenant, pull it in and redraw. Own writes are ignored via the
-// session id so a device never "updates" itself from its own push.
+// Live cross-device updates: when another device signed into THIS SAME
+// login pushes a change, pull it in and redraw. A different login never
+// triggers this, since the filter is scoped to currentUserId. Own writes
+// are ignored via the session id so a device never "updates" itself from
+// its own push.
 function subscribeCloudRealtime(){
-  if (!supabaseClient || currentTenantId == null) return;
+  if (!supabaseClient || currentUserId == null) return;
   if (cloudChannel){ try{ supabaseClient.removeChannel(cloudChannel); }catch(e){} }
   cloudChannel = supabaseClient
-    .channel('dar_shifts_' + currentTenantId)
+    .channel('dar_shifts_' + currentUserId)
     .on('postgres_changes',
-      { event: '*', schema: 'public', table: 'dar_shifts', filter: 'tenant_id=eq.' + currentTenantId },
+      { event: '*', schema: 'public', table: 'dar_shifts', filter: 'user_id=eq.' + currentUserId },
       function(payload){
         var row = payload.new;
         if (!row || row.session_id === cloudSessionId) return;
@@ -691,6 +726,7 @@ async function checkAuthAndRender(){
     platformShowGate("That account doesn't have access to Strickland SOC. Signed out — contact your admin if this is unexpected.");
     return;
   }
+  currentUserId = session.user.id;
   currentUserEmail = session.user.email;
   await cloudPull();
   platformShowDashboard(session.user.email);
@@ -717,6 +753,7 @@ document.getElementById('signout-btn').addEventListener('click', async function(
   await supabaseClient.auth.signOut();
   if (cloudChannel){ try{ supabaseClient.removeChannel(cloudChannel); }catch(e){} cloudChannel = null; }
   currentTenantId = null;
+  currentUserId = null;
   document.getElementById('who-line').hidden = true;
   document.getElementById('cloudStat').hidden = true;
   platformShowGate();
@@ -1255,6 +1292,7 @@ function renderPrint(){
       '<div><span>Entries</span><b>'+d.log.length+'</b></div>'+
       (d.esc ? '<div><span>Status</span><b>Escalated</b></div>' : '');
     document.getElementById("masterWrap").innerHTML =
+      sigCapturesHTML() +
       '<div class="sig"><div>Officer signature</div><div>Reviewed by — Strickland</div></div>'+
       '<div class="pfoot"><span>Strickland Security &amp; Safety Solutions, LLC</span>'+
       '<span>Generated '+esc(fmtDate(iso(new Date())))+'</span></div>';
@@ -1278,6 +1316,7 @@ function renderPrint(){
       '<div class="mrow"><div class="t">'+esc(tOf(e.at))+'</div><div class="s">'+esc(e.slab)+'</div>'+
       '<div class="ty">'+esc(e.type)+'</div><div>'+esc(noteWithBy(e))+'</div></div>').join("")
       : '<div style="font-size:9pt;color:#555">No entries recorded this shift.</div>')+
+    sigCapturesHTML() +
     '<div class="sig"><div>SOC operator signature</div><div>Reviewed by — Strickland HQ</div></div>'+
     '<div class="pfoot"><span>Strickland Security &amp; Safety Solutions, LLC — internal shift record</span>'+
     '<span>Generated '+esc(fmtDate(iso(new Date())))+'</span></div>';
@@ -1511,12 +1550,85 @@ function syncKindUI(){
     : "Only locations you escalated";
 }
 
+function sigCapturesHTML(){
+  const ends = (S.shiftEvents||[]).filter(e=>e.kind==="end" && e.sig);
+  if(!ends.length) return "";
+  return ends.map(e=>
+    '<div class="sig-cap"><img src="'+e.sig+'" alt="Signature"><div class="sig-cap-meta">'+esc(e.guard)+
+    '<span>'+esc(fmtDate((e.at||"").slice(0,10)))+' '+esc(tOf(e.at))+'</span></div></div>'
+  ).join("");
+}
+
 /* ============================================================
    RESET  (with a one-step undo, because a mis-click at 04:00
    would otherwise cost the whole night)
    ============================================================ */
 const UKEY = KEY + "_undo";
 const rdlg = document.getElementById("rdlg");
+
+/* ============================================================
+   SIGNATURE CAPTURE  (used by End Shift, below)
+   ============================================================ */
+const sigdlg = document.getElementById("sigdlg");
+const sigCanvas = document.getElementById("sigPad");
+const sigCtx = sigCanvas.getContext("2d");
+let sigDrawing = false, sigHasInk = false, sigPending = null;
+
+function sigClear(){
+  sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+  sigHasInk = false;
+}
+function sigPos(e){
+  const r = sigCanvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (sigCanvas.width / r.width),
+    y: (e.clientY - r.top) * (sigCanvas.height / r.height)
+  };
+}
+function sigStrokeStart(e){
+  sigDrawing = true;
+  try{ sigCanvas.setPointerCapture(e.pointerId); }catch(err){}
+  const p = sigPos(e);
+  sigCtx.beginPath();
+  sigCtx.moveTo(p.x, p.y);
+}
+function sigStrokeMove(e){
+  if(!sigDrawing) return;
+  const p = sigPos(e);
+  sigCtx.lineTo(p.x, p.y);
+  sigCtx.strokeStyle = "#111"; sigCtx.lineWidth = 2.2;
+  sigCtx.lineCap = "round"; sigCtx.lineJoin = "round";
+  sigCtx.stroke();
+  sigHasInk = true;
+}
+function sigStrokeEnd(){ sigDrawing = false; }
+sigCanvas.addEventListener("pointerdown", sigStrokeStart);
+sigCanvas.addEventListener("pointermove", sigStrokeMove);
+sigCanvas.addEventListener("pointerup", sigStrokeEnd);
+sigCanvas.addEventListener("pointerleave", sigStrokeEnd);
+
+// Opens the pad and calls onDone(dataUrl) once a non-empty signature is
+// confirmed. Cancelling the dialog calls onDone with nothing, so the
+// caller can tell "signed" apart from "backed out" and act accordingly.
+function openSigDialog(who, onDone){
+  sigPending = onDone;
+  document.getElementById("sigWho").textContent = "Sign for " + who + " to confirm the shift handoff.";
+  sigClear();
+  sigdlg.showModal();
+}
+document.getElementById("sigClear").onclick = sigClear;
+document.getElementById("sigCancel").onclick = function(){
+  const cb = sigPending; sigPending = null;
+  sigdlg.close();
+  if(cb) cb(null);
+};
+document.getElementById("sigDone").onclick = function(){
+  if(!sigHasInk){ toast("Sign in the box before continuing."); return; }
+  const data = sigCanvas.toDataURL("image/png");
+  const cb = sigPending; sigPending = null;
+  sigdlg.close();
+  if(cb) cb(data);
+};
 
 function startShift(){
   const g = (S.guard||"").trim();
@@ -1539,13 +1651,16 @@ function endShift(){
     document.getElementById("mGuard").focus();
     return;
   }
-  if(!S.shiftEvents) S.shiftEvents = [];
-  S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " ended shift — handed off", guard: g, kind:"end" });
-  S.guard = "";
-  document.getElementById("mGuard").value = "";
-  save();
-  render();
-  toast("Shift ended for " + g + " — ready for the next operator");
+  openSigDialog(g, function(sigData){
+    if(!sigData) return; // cancelled — shift is not ended, guard name untouched
+    if(!S.shiftEvents) S.shiftEvents = [];
+    S.shiftEvents.push({ id:"e"+(seq++), at: nowStamp(), note: g + " ended shift — handed off", guard: g, kind:"end", sig: sigData });
+    S.guard = "";
+    document.getElementById("mGuard").value = "";
+    save();
+    render();
+    toast("Shift ended for " + g + " — ready for the next operator");
+  });
 }
 
 function openReset(){
